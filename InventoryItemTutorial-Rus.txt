@@ -1,0 +1,844 @@
+/**
+ * Создание инвентаря для предмета (по типу рюкзака)
+ */
+ 
+/**
+ * Создатель оригинала туториала (eng): coolAlias
+ * Перевел на русский: keelfy
+ * Об ошибках, вопросах и предложениях о переводе писать сюда: http://vk.com/tehnyla
+ */
+ 
+/*
+	В этом туториале я расскажу как сделать предмет, который имеет инвентарь, как на рюкзак.
+	На этот раз я довольно мало написал кода, большая часть туториала будет посвещена болтовне.
+	Хотя код, нужный для реализации подобной задумки, код будет меняться от версии к версии (Minecraft'а и Forge'а), задумка останется неизменной.
+	Обратите внимание, что этот туториал не о том, как сдобавить свой первй предмет. Если вы никогда не занимались созданием модов
+	советую вам прочитать, либо посмотреть другие туториал для начинающий моддеров.
+	С другой стороны, если у вас достаточно опыта в работе с GUI, то у вас не составит проблемы сделать описанное в туториале.
+	
+	Я настоятельно рекомендую ознакомиться со статьей о NBT предмета, это поспособствует усвоению гайда:
+		http://www.minecraftforge.net/wiki/Item_nbt
+		
+	ЗАМЕТКА: Если вы хотите открывать инвентарь предмета по нажатию кнопки, посмотрите это:
+		http://www.minecraftforum.net/topic/1798625-162sobiohazardouss-forge-keybinding-tutorial/
+	
+	Начнем туториал!
+*/
+
+/**
+ * Часть I: Создание основы моды, прокси клиента и сервера.
+ */
+ 
+/*
+ * Главный класс мода
+ */
+package coolalias.inventoryitem;
+
+@Mod(modid = "inventoryitemmod", name = "Inventory Item Tutorial", version = "1.0.0")
+//Только под 1.6.4: @NetworkMod(clientSideRequired=true, serverSideRequired=false)
+public final class InventoryItemMain
+{
+	@Instance("inventoryitemmod")
+	public static InventoryItemMain instance;
+
+	@SidedProxy(clientSide = "coolalias.inventoryitem.ClientProxy", serverSide = "coolalias.inventoryitem.CommonProxy")
+	public static CommonProxy proxy;
+
+	/** Это используется для отслеживания GUI, которые мы сделаем*/
+	private static int modGuiIndex = 0;
+
+	/** Установка индекса(id) нашего GUI*/
+	public static final int GUI_ITEM_INV = modGuiIndex++;
+
+	//Добавление предмета
+	public static Item itemstore;
+
+	@EventHandler
+	public void preInit(FMLPreInitializationEvent event)
+	{
+		itemstore = new ItemStore().setUnlocalizedName("item_store").setCreativeTab(CreativeTabs.tabMisc);
+		GameRegistry.registerItem(itemstore, "item_store");
+	}
+
+	@EventHandler
+	public void load(FMLInitializationEvent event)
+	{
+		// У нас нет энтити или рендеров для регистрации, но на всякий случай пусть будет
+		proxy.registerRenderers();
+		// Регистрация CommonProxy как GuiHandler'а
+		NetworkRegistry.instance().registerGuiHandler(this, new CommonProxy());
+	}
+
+	@EventHandler
+	public void postInit(FMLPostInitializationEvent event)
+	{
+	}
+}
+/*
+ * Класс прокси сервера
+ */
+public class CommonProxy implements IGuiHandler
+{
+	public void registerRenderers() {}
+
+	@Override
+	public Object getServerGuiElement(int guiId, EntityPlayer player, World world, int x, int y, int z)
+	{
+		// Определяем что вызывется именно наш GUI
+		if (guiId == InventoryItemMain.GUI_ITEM_INV)
+		{
+			// Предмет в руках игрока создает инвентарь
+			return new ContainerItem(player, player.inventory, new InventoryItem(player.getHeldItem()));
+		}
+		return null;
+	}
+
+	@Override
+	public Object getClientGuiElement(int guiId, EntityPlayer player, World world, int x, int y, int z)
+	{
+		if (guiId == InventoryItemMain.GUI_ITEM_INV)
+		{
+			// Регистрируем класс нашего контейнера
+			// и вставляем его в инвентарь держимого предмета
+			return new GuiItemInventory((ContainerItem) new ContainerItem(player, player.inventory, new InventoryItem(player.getHeldItem())));
+		}
+		return null;
+	}
+}
+
+/*
+ * Класс прокси клиента
+ */
+public class ClientProxy extends CommonProxy
+{
+	@Override
+	public void registerRenderers() {}
+}
+
+/**
+ * Часть 2: Создание своего класса инвентаря
+ */
+ 
+/*
+	Создайте новый класс, принадлежащий (implements) IInventory - Это автоматически создать все нужные вам методы,
+	но вам нужно заполнить их кодом. Мы создадим новый конструктор, 
+	который будет получать и/или отправлять информацию о предметах по NBT. Так мы сможем сохранять инвентарь.
+ */
+public class InventoryItem implements IInventory
+{
+	private String name = "Inventory Item";
+	
+	/** Используется как ссылка для NBT Тэгов */
+	private final ItemStack invItem;
+
+	/** Установка размера инвентаря, пригодится */
+	public static final int INV_SIZE = 8;
+
+	/** Размер инвентаря должен быть равен количеству слотов, добавляемых в классе контейнера */
+	private ItemStack[] inventory = new ItemStack[INV_SIZE];
+
+	/**
+	 * @param itemstack - предмет, которому принадлежит инвентарь
+	 */
+	public InventoryItem(ItemStack stack)
+	{
+		invItem = stack;
+
+		// Создание нового NBT-соединения
+		if (!stack.hasTagCompound()) {
+			stack.setTagCompound(new NBTTagCompound());
+		}
+		// Обратите внимание, что используется аргумент stack, вместо переменной invItem
+
+		// Получение данных из NBT-соединения
+		readFromNBT(stack.getTagCompound());
+	}
+
+	@Override
+	public int getSizeInventory()
+	{
+		return inventory.length;
+	}
+
+	@Override
+	public ItemStack getStackInSlot(int slot)
+	{
+		return inventory[slot];
+	}
+
+	@Override
+	public ItemStack decrStackSize(int slot, int amount)
+	{
+		ItemStack stack = getStackInSlot(slot);
+		if(stack != null)
+		{
+			if(stack.stackSize > amount)
+			{
+				stack = stack.splitStack(amount);
+				// Не забудьте эту строку, иначе ваш инвентарь не будет сохраняться!
+				onInventoryChanged();
+			}
+			else
+			{
+				// Этот метод однозначно вызывает onInventoryChanged(), поэтому еще раз вызывать его не нужно
+				setInventorySlotContents(slot, null);
+			}
+		}
+		return stack;
+	}
+
+	@Override
+	public ItemStack getStackInSlotOnClosing(int slot)
+	{
+		ItemStack stack = getStackInSlot(slot);
+		setInventorySlotContents(slot, null);
+		return stack;
+	}
+
+	@Override
+	public void setInventorySlotContents(int slot, ItemStack stack)
+	{
+		inventory[slot] = itemstack;
+
+		if (stack != null && stack.stackSize > getInventoryStackLimit())
+		{
+			stack.stackSize = getInventoryStackLimit();
+		}
+
+		// Не забудьте эту строку, иначе ваш инвентарь не будет сохраняться!
+		onInventoryChanged();
+	}
+
+	// В 1.7.2+ переименованно в getInventoryName()
+	@Override
+	public String getInvName()
+	{
+		return name;
+	}
+
+	// В 1.7.2+ переименованно в hasCustomInventoryName()
+	@Override
+	public boolean isInvNameLocalized()
+	{
+		return name.length() > 0;
+	}
+
+	@Override
+	public int getInventoryStackLimit()
+	{
+		return 64;
+	}
+
+	/**
+	 * Этот метод сохраняет содержимое инвентаря, когда вызван (или должен был вызываться!)
+	 * Отлично. Намного лучше, чем использованние onUpdate() в предмете. Эта схема даст вам возможность 
+	 * изменять содержимое инвентаря, не открывая его.
+	 */
+	 
+	 // В 1.7.2+ переименованно в markDirty()
+	@Override
+	public void onInventoryChanged()
+	{
+		for (int i = 0; i < getSizeInventory(); ++i)
+		{
+			if (getStackInSlot(i) != null && getStackInSlot(i).stackSize == 0) {
+				inventory[i] = null;
+			}
+		}
+		
+		// Отправка информации по NBT-соединению:		
+		writeToNBT(invItem.getTagCompound());
+	}
+
+	@Override
+	public boolean isUseableByPlayer(EntityPlayer entityplayer)
+	{
+		return true;
+	}
+
+	// В 1.7.2+ переименованно в openInventory(EntityPlayer player)
+	@Override
+	public void openChest() {}
+
+	// В 1.7.2+ переименованно в closeInventory(EntityPlayer player)
+	@Override
+	public void closeChest() {}
+
+	/**
+	 * Этот метод кажется, не делает то, что можно понять из его названия, 
+	 * поскольно при помещении нужных предметов в инвентарь, он все равно
+	 * всегда возвращает значение false
+	 */
+	@Override
+	public boolean isItemValidForSlot(int slot, ItemStack itemstack)
+	{
+		// Это нужно чтобы будующие новые слоты могли работать
+		return !(itemstack.getItem() instanceof ItemStore);
+	}
+
+	/**
+	 * Новый метод, который считывает информацию о ItemStack'ах из NBT-соединения
+	 */
+	public void readFromNBT(NBTTagCompound compound)
+	{
+		// Для 1.7.2+ измените на    compound.getTagList("ItemInventory", Constants.NBT.TAG_COMPOUND);
+		NBTTagList items = compound.getTagList("ItemInventory");
+
+		for (int i = 0; i < items.tagCount(); ++i)
+		{
+			// Для 1.7.2+ измените на     items.getCompoundTagAt(i)
+			NBTTagCompound item = (NBTTagCompound) items.tagAt(i);
+			int slot = item.getInteger("Slot");
+
+			// Просто перепроверка того, что сохраненный предмет находится в рамках рахмера инвентаря
+			if (slot >= 0 && slot < getSizeInventory()) {
+				inventory[slot] = ItemStack.loadItemStackFromNBT(item);
+			}
+		}
+	}
+
+	/**
+	 * Новый метод, который отправляет информацию о ItemStack'ах в NBT-соединение
+	 */
+	public void writeToNBT(NBTTagCompound tagcompound)
+	{
+		// Создаем новый NBTTagList для хранения списка предметов
+		NBTTagList items = new NBTTagList();
+
+		for (int i = 0; i < getSizeInventory(); ++i)
+		{
+			// Отправка только тех ItemStack'ов, которые не пустые
+			if (getStackInSlot(i) != null)
+			{
+				// Создание нового NBT-соединения для отправки ItemStack'а и номера слота
+				NBTTagCompound item = new NBTTagCompound();
+				item.setInteger("Slot", i);
+				// Отправляет ItemStack в слоте i в NBT-соединение, который мы создали
+				getStackInSlot(i).writeToNBT(item);
+				
+				items.appendTag(nbttagcompound1);
+			}
+		}
+		// Добавление NBTTagList'а в наше NBT-соединение под названием "ItemInventory"
+		tagcompound.setTag("ItemInventory", items);
+	}
+}
+
+/*
+	Если вы хотите помещать предмет в инвентаре в подобные ему экземпляры, вам нужен способ различать два экземпляра одного 
+	и того же предмета, вы конечно можеет проверить не помещаете ли экземпляр обратно в себя. 
+	Но на самом деле вам нужен UUID в виде текста для каждого предмета в инвентаре, дабы не игра путалась среди этих предметов.
+ */
+ 
+// Обьявление переменной:
+protected String uniqueID;
+
+/** Инициализация переменной: */
+uniqueID = "";
+
+if (!itemstack.hasTagCompound())
+{
+	itemstack.setTagCompound(new NBTTagCompound());
+	// Неимение тэга соединения (tagcompound) означает отсутствие UUID, значит нужно добавить UUID:
+	uniqueID = UUID.randomUUID().toString();
+}
+
+/** Когда считываются данные с NBT-соединения: */
+if ("".equals(uniqueID))
+{
+	// пытаемся прочитать уникальный id (UUID) у полученной информации
+	uniqueID = tagcompound.getString("uniqueID");
+	// если мы получаем "", то устанавливаем UUID
+	if ("".equals(uniqueID))
+	{
+		uniqueID = UUID.randomUUID().toString();
+	}
+}
+
+/** Jnghfdrf данных в NBT-соединение: */
+// просто добавьте эту строку
+tagcompound.setString("uniqueID", this.uniqueID);
+
+
+/*
+	Под конец, в классе контейнера, вам нужно проверить равеен ли
+	уникальный id открытого инвентаря уникальному id itemstack'ом в методе
+	'transferStackInSlot'. А так же проверить есть ли предмет в слоте в методе 'slotClick'. 
+	В обоих случиях вам нужно предотвратить перемещение предмета, ибо это влечет за собой неприятные последствия.
+*/
+
+/**
+ * Часть 3: Создание класса контейнера для вашего инвентаря
+ */
+ 
+/*
+	Дальше будет ОЧЕНЬ много кода, но не упускайте и читайте каждый комментарий, дабы позже у вас не возникали проблемы.
+	Так же я добавил в сюда один из предыдущих туториалов:
+	"Как перемещать предметы нажатием Shift", немного улучшив его.
+	По моему мнению.
+ */
+public class ContainerItem extends Container
+{
+	/** Переменная класса нашего инвентаря, нужна только для ссылки на isUseableByPlayer */
+	private final InventoryItem inventory;
+
+	/** Использованние этого делает transferStackInSlot() проще и осуществляемее
+	 * INV_START является индексом первого слота инвентаря игрока, так что INV_START нашего инвентаря предмета 
+	 * вычисляется по примеру  - если в массиве 5 слотов (Массив от 0 до 4), то наш INV_START = 5
+	 * Обратите внимание на то, что мы не знаем скольок точно слотов мы сделаем. Мы просто можем изменить значение
+	 * InventoryItem.INV_SIZE и кол-во слотов в контейнере перестроится автоматически. */
+	private static final int INV_START = InventoryItem.INV_SIZE, INV_END = INV_START+26,
+			HOTBAR_START = INV_END+1, HOTBAR_END = HOTBAR_START+8;
+
+	// Если вы планируете добавлять слоты для брони, добавьте:
+	// ARMOR_START = InventoryItem.INV_SIZE, ARMOR_END = ARMOR_START+3,
+	// INV_START = ARMOR_END+1, and then carry on like above.
+
+	public ContainerItem(EntityPlayer par1Player, InventoryPlayer inventoryPlayer, InventoryItem inventoryItem)
+	{
+		this.inventory = inventoryItem;
+
+		int i;
+
+		// ИНВЕНТАРЬ ПРЕДМЕТА - Вам нужно изменять положение некоторых слотов подстать вашей текстуре
+		// Я сделал вертикальную колонку из 4слотов справа от модели игрока
+		for (i = 0; i < InventoryItem.INV_SIZE; ++i)
+		{
+			// Вы можете создать свой слот, если вы хотите видеть особенные качества у него,
+			// например, вы сможете класть в свой слот только определенные предметы.
+			// Мы сделаем свой класс слота, чтобы показать как это работает,
+			// но если вы хотите сделать слот, в который можно будет поместить все, что угодно
+			// вы можете использовать ванильный класс.
+			this.addSlotToContainer(new SlotItemInv(this.inventory, i, 80 + (18 * (int)(i/4)), 8 + (18*(i%4))));
+		}
+
+		// Если вы хотите, вы можете добавить слоты для брони, но вам нужно скопировать 
+		// класс SlotArmor, ибо в ваниле он не публичный. Я не хочу заниматься этим в своем туториале.
+		/*
+		for (i = 0; i < 4; ++i)
+		{
+			// Это местоположение слотов для ванильного инвентаря
+			this.addSlotToContainer(new SlotArmor(this.player, inventoryPlayer, inventoryPlayer.getSizeInventory() - 1 - i, 8, 8 + i * 18, i));
+		}
+		*/
+
+		// ИНВЕНТАРЬ ИГРОКА - используем стандартное положение слотов для стандартной текстуры
+		for (i = 0; i < 3; ++i)
+		{
+			for (int j = 0; j < 9; ++j)
+			{
+				this.addSlotToContainer(new Slot(inventoryPlayer, j + i * 9 + 9, 8 + j * 18, 84 + i * 18));
+			}
+		}
+
+		// ЭКШНБАР ИГРОКА - используем стандартное положение слотов для стандартной текстуры
+		for (i = 0; i < 9; ++i)
+		{
+			this.addSlotToContainer(new Slot(inventoryPlayer, i, 8 + i * 18, 142));
+		}
+	}
+
+	@Override
+	public boolean canInteractWith(EntityPlayer entityplayer)
+	{
+		// Вы должны обязательно возвратить значение метода isUseableByPlayer
+		return inventory.isUseableByPlayer(player);
+	}
+
+	/**
+	 * Вызывается, когда используется сочитаение Shift+Click. Вы должны скопировать это, либо вас будет крашить при каждой подобной попытке.
+	 */
+	public ItemStack transferStackInSlot(EntityPlayer par1EntityPlayer, int index)
+	{
+		ItemStack itemstack = null;
+		Slot slot = (Slot) this.inventorySlots.get(index);
+
+		if (slot != null && slot.getHasStack())
+		{
+			ItemStack itemstack1 = slot.getStack();
+			itemstack = itemstack1.copy();
+
+			// Если предмет в нашем инвентаре предмета или в нашем слоте брони
+			if (index < INV_START)
+			{
+				// пытаемся поместить предмет в инвентарь игрока или в экшнбар
+				if (!this.mergeItemStack(itemstack1, INV_START, HOTBAR_END+1, true))
+				{
+					return null;
+				}
+
+				slot.onSlotChange(itemstack1, itemstack);
+			}
+			// Если предмет в инвентаре или в хотбаре, пытаемся поместить в наш инвентарь предмета или в наш слот брони
+			else
+			{
+				/*
+				Если ваш инвентарь хранит только определенные предметы,
+				вы можете поменять выше описанную систему реагирования на Shift+Click на это:
+				
+				// Проверка на принадлежность предмета к нужному типу
+				if (itemstack1.getItem() instanceof ItemCustom)
+				{
+					// Пытаемся переместить в наш слот инвентаря
+					// мы используем 'InventoryItem.INV_SIZE' вместо INV_START на всякий случай,
+					// если вы добавите свой особенный слот (для брони, колец и т.п.)
+					if (!this.mergeItemStack(itemstack1, 0, InventoryItem.INV_SIZE, false))
+					{
+						return null;
+					}
+				}
+				// Если вы добавили слоты для брони, взгляните на код для данных слотов
+				// Проверяем принадлженость предмета к броне
+				if (itemstack1.getItem() instanceof ItemArmor)
+				{
+					int type = ((ItemArmor) itemstack1.getItem()).armorType;
+					if (!this.mergeItemStack(itemstack1, ARMOR_START + type, ARMOR_START + type + 1, false))
+					{
+						return null;
+					}
+				}
+				
+				Если вы не приминяете каких-либо особых слотов, то у вас есть два варианта:
+				1. Перемещение предметов путем Shift+Click между инвентарем игрока и вашим инвентарем предмета
+				2. Перемещение предметов путем Shift+Click между экшнбаром игрока и вашим инвентарем предмета
+				 
+				 
+				 
+				Нужно выбрать только ОДНУ из следующих реализаций!!!
+				*/
+				
+				/**
+				 * Реализация 1: Shift-click в вашем инвентаре предмета
+				 */
+				if (index >= INV_START)
+				{
+					// помещается в ваш инвентарь
+					if (!this.mergeItemStack(itemstack1, 0, INV_START, false))
+					{
+						return null;
+					}
+				}
+				
+				/**
+				 * Реализация 2: Shift-click в инвентаре игрока и экшнбаре
+				 */
+				// если предмет в инвентаре игрока, но не в экшнбаре
+				if (index >= INV_START && index < HOTBAR_START)
+				{
+					// помещение в экшнбар
+					if (!this.mergeItemStack(itemstack1, HOTBAR_START, HOTBAR_END+1, false))
+					{
+						return null;
+					}
+				}
+				// если предмет в экшнбаре, но не в инвентаре
+				else if (index >= HOTBAR_START && index < HOTBAR_END+1)
+				{
+					// помещение в инвентарь
+					if (!this.mergeItemStack(itemstack1, INV_START, INV_END+1, false))
+					{
+						return null;
+					}
+				}
+			}
+
+			if (itemstack1.stackSize == 0)
+			{
+				slot.putStack((ItemStack) null);
+			}
+			else
+			{
+				slot.onSlotChanged();
+			}
+
+			if (itemstack1.stackSize == itemstack.stackSize)
+			{
+				return null;
+			}
+
+			slot.onPickupFromSlot(par1EntityPlayer, itemstack1);
+		}
+
+		return itemstack;
+	}
+
+	/**
+	 * Вы должны скопировать этот метод чтобы предотвратить перемещение стаков
+	 * в инвентаре, в противном случае, позиции стаков не будут сохраняться должным образом
+	 */
+	@Override
+	public ItemStack slotClick(int slot, int button, int flag, EntityPlayer player) {
+		if (slot >= 0 && getSlot(slot) != null && getSlot(slot).getStack() == player.getHeldItem()) {
+			return null;
+		}
+		return super.slotClick(slot, button, flag, player);
+	}
+}
+
+/*
+Special note: Если в вашем инвентаре стоит ограничение на кол-во предметов в стаке равное 1
+вам нужно изменить метод mergeStackInSlot чтобы не потерять все предметы в стаке, кроме одного.
+*/
+/**
+ * Ванильный метод mergeItemStack неккоректно работает с инвентарями,
+ * где максимальное кол-во предмета в стаке 1.
+ * Я модифицировал этот метод, чтобы избежать ошибки
+ */
+@Override
+protected boolean mergeItemStack(ItemStack stack, int start, int end, boolean backwards)
+{
+	boolean flag1 = false;
+	int k = (backwards ? end - 1 : start);
+	Slot slot;
+	ItemStack itemstack1;
+
+	if (stack.isStackable())
+	{
+		while (stack.stackSize > 0 && (!backwards && k < end || backwards && k >= start))
+		{
+			slot = (Slot) inventorySlots.get(k);
+			itemstack1 = slot.getStack();
+
+			if (!slot.isItemValid(stack)) {
+				k += (backwards ? -1 : 1);
+				continue;
+			}
+
+			if (itemstack1 != null && itemstack1.getItem() == stack.getItem() &&
+					(!stack.getHasSubtypes() || stack.getItemDamage() == itemstack1.getItemDamage()) && ItemStack.areItemStackTagsEqual(stack, itemstack1))
+			{
+				int l = itemstack1.stackSize + stack.stackSize;
+
+				if (l <= stack.getMaxStackSize() && l <= slot.getSlotStackLimit()) {
+					stack.stackSize = 0;
+					itemstack1.stackSize = l;
+					inventory.onInventoryChanged();
+					flag1 = true;
+				} else if (itemstack1.stackSize < stack.getMaxStackSize() && l < slot.getSlotStackLimit()) {
+					stack.stackSize -= stack.getMaxStackSize() - itemstack1.stackSize;
+					itemstack1.stackSize = stack.getMaxStackSize();
+					inventory.onInventoryChanged();
+					flag1 = true;
+				}
+			}
+
+			k += (backwards ? -1 : 1);
+		}
+	}
+	if (stack.stackSize > 0)
+	{
+		k = (backwards ? end - 1 : start);
+		while (!backwards && k < end || backwards && k >= start) {
+			slot = (Slot) inventorySlots.get(k);
+			itemstack1 = slot.getStack();
+
+			if (!slot.isItemValid(stack)) {
+				k += (backwards ? -1 : 1);
+				continue;
+			}
+
+			if (itemstack1 == null) {
+				int l = stack.stackSize;
+				if (l <= slot.getSlotStackLimit()) {
+					slot.putStack(stack.copy());
+					stack.stackSize = 0;
+					inventory.onInventoryChanged();
+					flag1 = true;
+					break;
+				} else {
+					putStackInSlot(k, new ItemStack(stack.getItem(), slot.getSlotStackLimit(), stack.getItemDamage()));
+					stack.stackSize -= slot.getSlotStackLimit();
+					inventory.onInventoryChanged();
+					flag1 = true;
+				}
+			}
+
+			k += (backwards ? -1 : 1);
+		}
+	}
+
+	return flag1;
+}
+/*
+	Создание своего слота - простое занятие:
+*/
+public class SlotItemInv extends Slot
+{
+	public SlotItemInv(IInventory inv, int index, int xPos, int yPos)
+	{
+		super(inv, index, xPos, yPos);
+	}
+
+	// Это единственный метод, который мы должны изменить
+	// Нам нужно запретить класть предмет, который содержит данный инвентарь
+	// в этот инвентарь (это сделает предмет недоступным)
+	// Этот как запрет класть рюкзак в рюкзак
+	
+	/**
+	 * Проверка, подходит ли предмет для слота
+	 */
+	@Override
+	public boolean isItemValid(ItemStack itemstack)
+	{
+		// Все подходит, кроме нашего предмета с инвентарем
+		return !(itemstack.getItem() instanceof ItemStore);
+	}
+}
+
+/**
+ * Часть 4: Создание GUI для нашего инвентаря
+ */
+
+/*
+	Здесь не очень много самописного кода, большая чатсь просто копируется и вставляется с ванилы
+ */
+public class GuiItemInventory extends GuiContainer
+{
+	/** размеры x и y для этого инвентаря в пикселях. Обьявляется в float, позже меняется на int*/
+	private float xSize_lo;
+	private float ySize_lo;
+
+	/** ResourceLocation имеет 2 параметра: ModId, путь до текстуры:
+	 * 		"src/minecraft/assets/modid/"
+	 * 
+	 * Я сделал обычную текстуру. Вы можете скачать её с:
+	 * 		https://github.com/keelfy/ModdingTutorials-RussianLocalization/textures/inventoryitem.png
+	 */
+	private static final ResourceLocation iconLocation = new ResourceLocation("inventoryitemmod", "textures/gui/inventoryitem.png");
+
+	/** Наш инвентарь */
+	private final InventoryItem inventory;
+
+	public GuiItemInventory(ContainerItem containerItem)
+	{
+		super(containerItem);
+		this.inventory = containerItem.inventory;
+	}
+
+	/**
+	 * Отрисовка экрана и всех компонентов
+	 */
+	public void drawScreen(int par1, int par2, float par3)
+	{
+		super.drawScreen(par1, par2, par3);
+		this.xSize_lo = (float)par1;
+		this.ySize_lo = (float)par2;
+	}
+
+	/**
+	 * DОтрисовка переднего плана GuiContainer (все то, что перед предметами)
+	 */
+	protected void drawGuiContainerForegroundLayer(int par1, int par2)
+	{
+		String s = this.inventory.isInvNameLocalized() ? this.inventory.getInvName() : I18n.getString(this.inventory.getInvName());
+		this.fontRenderer.drawString(s, this.xSize / 2 - this.fontRenderer.getStringWidth(s) / 2, 0, 4210752);
+		this.fontRenderer.drawString(I18n.getString("container.inventory"), 26, this.ySize - 96 + 4, 4210752);
+	}
+
+	/**
+	 * Отрисовка заднего плана GuiContainer (все то, что позади предметов)
+	 */
+	protected void drawGuiContainerBackgroundLayer(float par1, int par2, int par3)
+	{
+		GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+		this.mc.getTextureManager().bindTexture(iconLocation);
+		int k = (this.width - this.xSize) / 2;
+		int l = (this.height - this.ySize) / 2;
+		this.drawTexturedModalRect(k, l, 0, 0, this.xSize, this.ySize);
+		int i1;
+		drawPlayerModel(k + 51, l + 75, 30, (float)(k + 51) - this.xSize_lo, (float)(l + 75 - 50) - this.ySize_lo, this.mc.thePlayer);
+	}
+
+	/**
+	 * Это рендерит модель игрока в стандартной позиции (в более поздних версиях Minecraft'а / Forge'а, вы можете
+	 * просто найти метод GuiInventory.drawEntityOnScreen и скопировать его)
+	 */
+	public static void drawPlayerModel(int x, int y, int scale, float yaw, float pitch, EntityLivingBase entity) {
+		GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+		GL11.glPushMatrix();
+		GL11.glTranslatef(x, y, 50.0F);
+		GL11.glScalef(-scale, scale, scale);
+		GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F);
+		float f2 = entity.renderYawOffset;
+		float f3 = entity.rotationYaw;
+		float f4 = entity.rotationPitch;
+		float f5 = entity.prevRotationYawHead;
+		float f6 = entity.rotationYawHead;
+		GL11.glRotatef(135.0F, 0.0F, 1.0F, 0.0F);
+		RenderHelper.enableStandardItemLighting();
+		GL11.glRotatef(-135.0F, 0.0F, 1.0F, 0.0F);
+		GL11.glRotatef(-((float) Math.atan(pitch / 40.0F)) * 20.0F, 1.0F, 0.0F, 0.0F);
+		entity.renderYawOffset = (float) Math.atan(yaw / 40.0F) * 20.0F;
+		entity.rotationYaw = (float) Math.atan(yaw / 40.0F) * 40.0F;
+		entity.rotationPitch = -((float) Math.atan(pitch / 40.0F)) * 20.0F;
+		entity.rotationYawHead = entity.rotationYaw;
+		entity.prevRotationYawHead = entity.rotationYaw;
+		GL11.glTranslatef(0.0F, entity.yOffset, 0.0F);
+		RenderManager.instance.playerViewY = 180.0F;
+		RenderManager.instance.renderEntityWithPosYaw(entity, 0.0D, 0.0D, 0.0D, 0.0F, 1.0F);
+		entity.renderYawOffset = f2;
+		entity.rotationYaw = f3;
+		entity.rotationPitch = f4;
+		entity.prevRotationYawHead = f5;
+		entity.rotationYawHead = f6;
+		GL11.glPopMatrix();
+		RenderHelper.disableStandardItemLighting();
+		GL11.glDisable(GL12.GL_RESCALE_NORMAL);
+		OpenGlHelper.setActiveTexture(OpenGlHelper.lightmapTexUnit);
+		GL11.glDisable(GL11.GL_TEXTURE_2D);
+		OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
+	}
+}
+
+/**
+ * Часть 5: Наконец, создаем предмет, который будет открывать наш инвентарь
+ */
+/*
+	Легкое под конец. Прдемету нужно только добавить возможность открывать инвентарь.
+	Я назвал класс предмета ItemStore, чтобы мне было проще орентироваться в моем коде.
+	NНе очень оригинально, но достаточно для туториала.
+ */
+public class ItemStore extends Item
+{
+	public ItemStore(int par1)
+	{
+		super(par1);
+		setMaxStackSize(1);
+		setCreativeTab(CreativeTabs.tabMisc);
+	}
+
+	// Без этого метода ваш инвентарь работать НЕ будет!!!
+	@Override
+	public int getMaxItemUseDuration(ItemStack stack) {
+		return 1; // возвращение любого числа больше 0
+	}
+   
+    	@Override
+	public ItemStack onItemRightClick(ItemStack itemstack, World world, EntityPlayer player)
+	{
+		if (!world.isRemote)
+		{
+			// Если игрок не приседает, то GUI открывается
+			if (!player.isSneaking()) {
+				player.openGui(InventoryItemMain.instance, InventoryItemMain.GUI_ITEM_INV, world, 0, 0, 0);
+			}
+			
+			// В противном случае, и гроку добавляется немного алмазов, чтобы у него была мотивация попытаться открыть еще раз :)
+			else {
+				new InventoryItem(player.getHeldItem()).setInventorySlotContents(0, new ItemStack(Item.diamond,4));
+			}
+		}
+		
+		return itemstack;
+	}
+
+	@Override
+	@SideOnly(Side.CLIENT)
+	public void registerIcons(IconRegister iconRegister)
+	{
+		this.itemIcon = iconRegister.registerIcon("inventoryitemmod:" + this.getUnlocalizedName().substring(5));
+	}
+}
+/*
+Вот как-то так!
+*/
