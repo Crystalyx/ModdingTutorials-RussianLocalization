@@ -35,6 +35,7 @@
 /*
  * Главный класс мода
  */
+ 
 package coolalias.inventoryitem;
 
 @Mod(modid = "inventoryitemmod", name = "Inventory Item Tutorial", version = "1.0.0")
